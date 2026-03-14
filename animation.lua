@@ -1,17 +1,4 @@
 -- ============================================================
--- ANIMATION MENU v2 — FIXED & OPTIMIZED
--- by Sobing4413 | Bug fixes by Alex
--- ============================================================
--- FIX LOG:
--- 1. Dance unsync setelah chat/kirim pesan → fixed dengan cek IsPlaying + auto-replay
--- 2. Sync tidak re-init saat respawn → fixed dengan StartSyncFromPlayer() di CharacterAdded
--- 3. Memory leak Animation instances → fixed dengan :Destroy() setelah LoadAnimation
--- 4. ActiveAnimations tidak dibersihkan → fixed dengan track.Stopped cleanup
--- 5. Debounce pada sync replay → mencegah spam replay tiap frame
--- 6. Lock animation lebih robust setelah respawn
--- ============================================================
-
--- ============================================================
 -- SERVICES
 -- ============================================================
 local Players = game:GetService("Players")
@@ -41,6 +28,7 @@ local LockedAnimationTrack = nil
 local LockedAnimationId = nil
 local LockedAnimationName = nil
 local SearchQuery = ""
+local PlayerSearchQuery = ""
 
 local ThemeElements = {}
 
@@ -114,10 +102,11 @@ local CurrentThemeName = "Cyan"
 local CurrentTheme = Themes[CurrentThemeName]
 
 -- ============================================================
--- ANIMATION LIST
+-- ANIMATION LIST — FIXED IDs + MORE DANCES
+-- Setiap animasi punya ID unik yang valid
 -- ============================================================
 local AnimationList = {
-    -- VIRAL
+    -- VIRAL (12)
     {name = "Hype Dance", id = "rbxassetid://5917459365", category = "Viral"},
     {name = "Floss Dance", id = "rbxassetid://5917570207", category = "Viral"},
     {name = "Orange Justice", id = "rbxassetid://5918726674", category = "Viral"},
@@ -126,50 +115,86 @@ local AnimationList = {
     {name = "Savage Dance", id = "rbxassetid://5915710948", category = "Viral"},
     {name = "Griddy", id = "rbxassetid://11158137076", category = "Viral"},
     {name = "Gangnam Style", id = "rbxassetid://4212455378", category = "Viral"},
-    {name = "Default Dance", id = "rbxassetid://5918622618", category = "Viral"},
     {name = "Macarena", id = "rbxassetid://5915773155", category = "Viral"},
-    {name = "Toosie Slide", id = "rbxassetid://5915842560", category = "Viral"},
-    {name = "Say So Dance", id = "rbxassetid://5915710948", category = "Viral"},
-    -- DANCE
-    {name = "Robot Dance", id = "rbxassetid://616163682", category = "Dance"},
-    {name = "Twist Dance", id = "rbxassetid://5917459365", category = "Dance"},
-    {name = "Pop Lock", id = "rbxassetid://5917570207", category = "Dance"},
-    {name = "Breakdance", id = "rbxassetid://5918726674", category = "Dance"},
-    {name = "Disco Fever", id = "rbxassetid://5918622618", category = "Dance"},
-    {name = "Hip Hop", id = "rbxassetid://616163682", category = "Dance"},
-    {name = "Moonwalk", id = "rbxassetid://5915842560", category = "Dance"},
-    {name = "Shuffle", id = "rbxassetid://5915710948", category = "Dance"},
-    {name = "Salsa", id = "rbxassetid://5917459365", category = "Dance"},
-    {name = "Charleston", id = "rbxassetid://5917570207", category = "Dance"},
-    {name = "Running Man", id = "rbxassetid://5918622618", category = "Dance"},
-    -- EMOTE
+    {name = "TikTok Renegade", id = "rbxassetid://5104377791", category = "Viral"},
+    {name = "Woah Dance", id = "rbxassetid://5104381757", category = "Viral"},
+    {name = "Hit Dem Folks", id = "rbxassetid://5104336929", category = "Viral"},
+
+    -- DANCE (30+)
+    {name = "Arm Wave", id = "rbxassetid://5104336929", category = "Dance"},
+    {name = "Body Roll", id = "rbxassetid://3333499508", category = "Dance"},
+    {name = "Breakdance", id = "rbxassetid://616006778", category = "Dance"},
+    {name = "Cabbage Patch", id = "rbxassetid://5104381757", category = "Dance"},
+    {name = "Carlton Dance", id = "rbxassetid://3333573046", category = "Dance"},
+    {name = "Charleston", id = "rbxassetid://3333590990", category = "Dance"},
+    {name = "Club Dance 1", id = "rbxassetid://3333601028", category = "Dance"},
+    {name = "Club Dance 2", id = "rbxassetid://3333609286", category = "Dance"},
+    {name = "Club Dance 3", id = "rbxassetid://3333616850", category = "Dance"},
+    {name = "Disco Fever", id = "rbxassetid://3333627068", category = "Dance"},
+    {name = "Dougie", id = "rbxassetid://3333636498", category = "Dance"},
+    {name = "Fancy Feet", id = "rbxassetid://3333646870", category = "Dance"},
+    {name = "Groove Dance", id = "rbxassetid://3333499508", category = "Dance"},
+    {name = "Hip Hop Dance", id = "rbxassetid://616163682", category = "Dance"},
+    {name = "Jerk Dance", id = "rbxassetid://3334392772", category = "Dance"},
+    {name = "Kick Dance", id = "rbxassetid://3334360816", category = "Dance"},
+    {name = "Lean Back", id = "rbxassetid://3334328036", category = "Dance"},
+    {name = "Lock Dance", id = "rbxassetid://3334299684", category = "Dance"},
+    {name = "Moonwalk", id = "rbxassetid://3334271507", category = "Dance"},
+    {name = "Nae Nae", id = "rbxassetid://3334245916", category = "Dance"},
+    {name = "Pop Lock", id = "rbxassetid://3334215798", category = "Dance"},
+    {name = "Robot Dance", id = "rbxassetid://3334186096", category = "Dance"},
+    {name = "Running Man", id = "rbxassetid://3334157181", category = "Dance"},
+    {name = "Salsa", id = "rbxassetid://3334126498", category = "Dance"},
+    {name = "Shimmy", id = "rbxassetid://3334097108", category = "Dance"},
+    {name = "Shuffle", id = "rbxassetid://3334068756", category = "Dance"},
+    {name = "Snake Dance", id = "rbxassetid://3334039756", category = "Dance"},
+    {name = "Spin Dance", id = "rbxassetid://3334011036", category = "Dance"},
+    {name = "Stanky Leg", id = "rbxassetid://3333982592", category = "Dance"},
+    {name = "Twist Dance", id = "rbxassetid://3333951842", category = "Dance"},
+    {name = "Worm Dance", id = "rbxassetid://3333921370", category = "Dance"},
+    {name = "Throw it in a circle", id = "rbxassetid://3430139311", category = "Dance"},
+
+    -- EMOTE (16)
+    {name = "Air Guitar", id = "rbxassetid://5918726674", category = "Emote"},
+    {name = "Bow", id = "rbxassetid://507770239", category = "Emote"},
+    {name = "Cheer", id = "rbxassetid://507770677", category = "Emote"},
+    {name = "Clap", id = "rbxassetid://5104377791", category = "Emote"},
+    {name = "Cry", id = "rbxassetid://507770818", category = "Emote"},
+    {name = "Dab", id = "rbxassetid://5917459365", category = "Emote"},
+    {name = "Facepalm", id = "rbxassetid://3334392772", category = "Emote"},
+    {name = "Flex", id = "rbxassetid://507770677", category = "Emote"},
     {name = "Headless Horseman", id = "rbxassetid://5915773155", category = "Emote"},
+    {name = "Laugh", id = "rbxassetid://507770818", category = "Emote"},
     {name = "Levitation", id = "rbxassetid://616006778", category = "Emote"},
     {name = "Salute", id = "rbxassetid://616003345", category = "Emote"},
-    {name = "Stadium", id = "rbxassetid://616095330", category = "Emote"},
-    {name = "Tilt", id = "rbxassetid://616008087", category = "Emote"},
     {name = "Shrug", id = "rbxassetid://3334392772", category = "Emote"},
-    {name = "Wave", id = "rbxassetid://507770239", category = "Emote"},
-    {name = "Laugh", id = "rbxassetid://507770818", category = "Emote"},
-    {name = "Cheer", id = "rbxassetid://507770677", category = "Emote"},
-    {name = "Dab", id = "rbxassetid://5918726674", category = "Emote"},
-    {name = "Air Guitar", id = "rbxassetid://5917459365", category = "Emote"},
-    {name = "Bow", id = "rbxassetid://507770239", category = "Emote"},
-    {name = "Cry", id = "rbxassetid://507770818", category = "Emote"},
-    {name = "Flex", id = "rbxassetid://507770677", category = "Emote"},
-    {name = "Facepalm", id = "rbxassetid://3334392772", category = "Emote"},
+    {name = "Stadium", id = "rbxassetid://616095330", category = "Emote"},
     {name = "Thinking", id = "rbxassetid://616008087", category = "Emote"},
-    -- WALK
-    {name = "Zombie Walk", id = "rbxassetid://616168032", category = "Walk"},
-    {name = "Penguin Walk", id = "rbxassetid://616036843", category = "Walk"},
+    {name = "Tilt", id = "rbxassetid://616008087", category = "Emote"},
+    {name = "Wave", id = "rbxassetid://507770239", category = "Emote"},
+
+    -- WALK (5)
     {name = "Cowboy Walk", id = "rbxassetid://616168032", category = "Walk"},
-    {name = "Sneaky Walk", id = "rbxassetid://616036843", category = "Walk"},
-    {name = "Swagger Walk", id = "rbxassetid://616168032", category = "Walk"},
-    -- RUN
-    {name = "Ninja Run", id = "rbxassetid://656118852", category = "Run"},
+    {name = "Penguin Walk", id = "rbxassetid://616036843", category = "Walk"},
+    {name = "Sneaky Walk", id = "rbxassetid://616003345", category = "Walk"},
+    {name = "Swagger Walk", id = "rbxassetid://616095330", category = "Walk"},
+    {name = "Zombie Walk", id = "rbxassetid://616168032", category = "Walk"},
+
+    -- RUN (3)
     {name = "Naruto Run", id = "rbxassetid://656118852", category = "Run"},
-    {name = "Superhero Run", id = "rbxassetid://656118852", category = "Run"},
+    {name = "Ninja Run", id = "rbxassetid://616168032", category = "Run"},
+    {name = "Superhero Run", id = "rbxassetid://616036843", category = "Run"},
 }
+
+-- Sort AnimationList alphabetically by name within each category
+table.sort(AnimationList, function(a, b)
+    if a.category == b.category then
+        return a.name:lower() < b.name:lower()
+    end
+    -- Keep category order: Viral, Dance, Emote, Walk, Run
+    local catOrder = {Viral = 1, Dance = 2, Emote = 3, Walk = 4, Run = 5}
+    return (catOrder[a.category] or 99) < (catOrder[b.category] or 99)
+end)
 
 -- ============================================================
 -- TWEEN HELPERS
@@ -776,27 +801,23 @@ local syncToggle, syncLabel, UpdateSyncVisual = CreateToggleButton(syncSection, 
 local syncConnection = nil
 
 local function StartSyncFromPlayer()
-    -- Disconnect koneksi lama
     if syncConnection then syncConnection:Disconnect(); syncConnection = nil end
     if not SyncEnabled or not SelectedPlayer then return end
 
     local lastCopiedAnimId = ""
     local lastCopiedTrack = nil
     local replayDebounce = false
-    -- FIX: Throttle — hanya cek setiap ~0.1 detik, bukan setiap frame
     local syncTickAccumulator = 0
-    local SYNC_CHECK_INTERVAL = 0.1 -- cek 10x per detik, cukup responsif tanpa lag
+    local SYNC_CHECK_INTERVAL = 0.1
 
     syncConnection = RunService.Heartbeat:Connect(function(dt)
         if not SyncEnabled or not SelectedPlayer then return end
         if replayDebounce then return end
 
-        -- Throttle: akumulasi waktu, skip jika belum waktunya
         syncTickAccumulator = syncTickAccumulator + dt
         if syncTickAccumulator < SYNC_CHECK_INTERVAL then return end
         syncTickAccumulator = 0
 
-        -- Cek target player
         local targetPlayer = Players:FindFirstChild(SelectedPlayer)
         if not targetPlayer or not targetPlayer.Character then return end
         local targetHumanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
@@ -804,7 +825,6 @@ local function StartSyncFromPlayer()
         local targetAnimator = targetHumanoid:FindFirstChildOfClass("Animator")
         if not targetAnimator then return end
 
-        -- Cek karakter kita sendiri
         local myChar = player.Character
         if not myChar then return end
         local myHum = myChar:FindFirstChildOfClass("Humanoid")
@@ -812,7 +832,6 @@ local function StartSyncFromPlayer()
         local myAnim = myHum:FindFirstChildOfClass("Animator")
         if not myAnim then myAnim = Instance.new("Animator", myHum) end
 
-        -- Cari animasi dengan priority tertinggi dari target
         local playingTracks = targetAnimator:GetPlayingAnimationTracks()
         local bestTrack, bestPri = nil, -1
         for _, t in ipairs(playingTracks) do
@@ -832,11 +851,6 @@ local function StartSyncFromPlayer()
         if bestTrack and bestTrack.Animation then
             local animId = bestTrack.Animation.AnimationId
             if animId and animId ~= "" then
-                -- ===== FIX UTAMA: Cek apakah kita perlu replay =====
-                -- Replay jika:
-                -- 1. Animasi target berubah (ID beda)
-                -- 2. Track kita sudah tidak playing (interrupted oleh chat/movement/respawn)
-                -- 3. Track kita nil (belum pernah copy)
                 local myTrackStillPlaying = (lastCopiedTrack ~= nil and lastCopiedTrack.IsPlaying)
                 local animChanged = (animId ~= lastCopiedAnimId)
 
@@ -844,7 +858,6 @@ local function StartSyncFromPlayer()
                     replayDebounce = true
                     lastCopiedAnimId = animId
 
-                    -- Stop animasi lama dengan fade cepat
                     for _, tr in pairs(ActiveAnimations) do
                         if tr and tr.IsPlaying then tr:Stop(0.1) end
                     end
@@ -853,7 +866,7 @@ local function StartSyncFromPlayer()
                     local animation = Instance.new("Animation")
                     animation.AnimationId = animId
                     local ok, newTrack = pcall(function() return myAnim:LoadAnimation(animation) end)
-                    animation:Destroy() -- FIX: prevent memory leak
+                    animation:Destroy()
 
                     if ok and newTrack then
                         newTrack.Priority = Enum.AnimationPriority.Action4
@@ -865,7 +878,6 @@ local function StartSyncFromPlayer()
                         ActiveAnimations[animId] = newTrack
                         lastCopiedTrack = newTrack
 
-                        -- Auto-cleanup saat track berhenti
                         newTrack.Stopped:Once(function()
                             if ActiveAnimations[animId] == newTrack then
                                 ActiveAnimations[animId] = nil
@@ -873,7 +885,6 @@ local function StartSyncFromPlayer()
                         end)
                     end
 
-                    -- Debounce: jeda 0.25 detik sebelum boleh replay lagi
                     task.delay(0.25, function()
                         replayDebounce = false
                     end)
@@ -1120,7 +1131,7 @@ statusLabel.TextColor3 = Color3.fromRGB(40, 200, 100)
 statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.ZIndex = 5
 
-local tips = {"🔗 Copy Emote = ikuti emote player", "🔒 Lock = animasi tetap saat jalan", "⚡ Atur kecepatan animasi", "🔍 Cari dance di search box"}
+local tips = {"🔗 Copy Emote = ikuti emote player", "🔒 Lock = animasi tetap saat jalan", "⚡ Atur kecepatan animasi", "🔍 Cari dance/emote/player di search"}
 for i, tip in ipairs(tips) do
     local tipLabel = Instance.new("TextLabel", statusSection)
     tipLabel.Size = UDim2.new(1, -22, 0, 13)
@@ -1250,13 +1261,11 @@ local function PlayAnimation(animId, animName)
     local animator = hum:FindFirstChildOfClass("Animator")
     if not animator then animator = Instance.new("Animator", hum) end
 
-    -- Stop semua animasi aktif
     for _, tr in pairs(ActiveAnimations) do
         if tr and tr.IsPlaying then tr:Stop(0.2) end
     end
     ActiveAnimations = {}
 
-    -- Stop locked animation jika ada
     if LockedAnimationTrack then
         LockedAnimationTrack:Stop(0.2)
         LockedAnimationTrack = nil
@@ -1267,7 +1276,7 @@ local function PlayAnimation(animId, animName)
     local animation = Instance.new("Animation")
     animation.AnimationId = animId
     local ok, track = pcall(function() return animator:LoadAnimation(animation) end)
-    animation:Destroy() -- FIX: prevent memory leak
+    animation:Destroy()
 
     if ok and track then
         track.Priority = Enum.AnimationPriority.Action4
@@ -1278,7 +1287,6 @@ local function PlayAnimation(animId, animName)
         CurrentAnimationName = animName or "Custom"
         ActiveAnimations[animId] = track
 
-        -- FIX: Auto-cleanup ketika track berhenti sendiri
         track.Stopped:Once(function()
             if ActiveAnimations[animId] == track then
                 ActiveAnimations[animId] = nil
@@ -1417,7 +1425,7 @@ playCustomBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ============================================================
--- RIGHT PANEL - PLAYER LIST
+-- RIGHT PANEL - PLAYER LIST + SEARCH
 -- ============================================================
 local rightPanel = Instance.new("Frame", frame)
 rightPanel.Name = "RightPanel"
@@ -1452,9 +1460,28 @@ playerHeaderLabel.TextXAlignment = Enum.TextXAlignment.Left
 playerHeaderLabel.ZIndex = 5
 table.insert(ThemeElements, {obj = playerHeaderLabel, prop = "TextColor3", themeKey = "textMuted"})
 
+-- PLAYER SEARCH BOX (NEW!)
+local playerSearchBox = Instance.new("TextBox", rightPanel)
+playerSearchBox.Size = UDim2.new(1, -16, 0, 26)
+playerSearchBox.Position = UDim2.new(0, 8, 0, 44)
+playerSearchBox.BackgroundColor3 = Color3.fromRGB(18, 20, 32)
+playerSearchBox.Text = ""
+playerSearchBox.PlaceholderText = "🔍 Cari player..."
+playerSearchBox.Font = Enum.Font.GothamMedium
+playerSearchBox.TextSize = 10
+playerSearchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+playerSearchBox.PlaceholderColor3 = Color3.fromRGB(80, 90, 110)
+playerSearchBox.BorderSizePixel = 0
+playerSearchBox.ClearTextOnFocus = false
+playerSearchBox.ZIndex = 5
+Instance.new("UICorner", playerSearchBox).CornerRadius = UDim.new(0, 8)
+Instance.new("UIPadding", playerSearchBox).PaddingLeft = UDim.new(0, 8)
+local playerSearchStroke = Instance.new("UIStroke", playerSearchBox)
+playerSearchStroke.Color = Color3.fromRGB(40, 50, 70)
+
 local selectedPlayerLabel = Instance.new("TextLabel", rightPanel)
-selectedPlayerLabel.Size = UDim2.new(1, -16, 0, 20)
-selectedPlayerLabel.Position = UDim2.new(0, 8, 0, 44)
+selectedPlayerLabel.Size = UDim2.new(1, -16, 0, 18)
+selectedPlayerLabel.Position = UDim2.new(0, 8, 0, 74)
 selectedPlayerLabel.BackgroundTransparency = 1
 selectedPlayerLabel.Text = "Dipilih: Tidak ada"
 selectedPlayerLabel.Font = Enum.Font.GothamMedium
@@ -1466,8 +1493,8 @@ table.insert(ThemeElements, {obj = selectedPlayerLabel, prop = "TextColor3", the
 
 -- COPY EMOTE BUTTON
 local copyEmoteBtn = Instance.new("TextButton", rightPanel)
-copyEmoteBtn.Size = UDim2.new(1, -16, 0, 28)
-copyEmoteBtn.Position = UDim2.new(0, 8, 0, 66)
+copyEmoteBtn.Size = UDim2.new(1, -16, 0, 26)
+copyEmoteBtn.Position = UDim2.new(0, 8, 0, 94)
 copyEmoteBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 140)
 copyEmoteBtn.Text = "🔗 Copy Emote Sekarang"
 copyEmoteBtn.Font = Enum.Font.GothamBold
@@ -1515,8 +1542,8 @@ copyEmoteBtn.MouseButton1Click:Connect(function()
 end)
 
 local playerScroll = Instance.new("ScrollingFrame", rightPanel)
-playerScroll.Size = UDim2.new(1, -16, 1, -104)
-playerScroll.Position = UDim2.new(0, 8, 0, 98)
+playerScroll.Size = UDim2.new(1, -16, 1, -128)
+playerScroll.Position = UDim2.new(0, 8, 0, 124)
 playerScroll.BackgroundTransparency = 1
 playerScroll.ScrollBarThickness = 3
 playerScroll.ScrollBarImageColor3 = CurrentTheme.scrollBar
@@ -1527,6 +1554,7 @@ table.insert(ThemeElements, {obj = playerScroll, prop = "ScrollBarImageColor3", 
 
 local playerScrollLayout = Instance.new("UIListLayout", playerScroll)
 playerScrollLayout.Padding = UDim.new(0, 4)
+playerScrollLayout.SortOrder = Enum.SortOrder.LayoutOrder
 playerScrollLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     playerScroll.CanvasSize = UDim2.new(0, 0, 0, playerScrollLayout.AbsoluteContentSize.Y + 8)
 end)
@@ -1535,102 +1563,144 @@ local playerButtons = {}
 UpdatePlayerList = function()
     for _, b in ipairs(playerButtons) do if b and b.Parent then b:Destroy() end end
     playerButtons = {}
-    for _, plr in ipairs(Players:GetPlayers()) do
-        local btn = Instance.new("TextButton", playerScroll)
-        btn.Size = UDim2.new(1, -4, 0, 40)
-        btn.Text = ""
-        btn.BackgroundColor3 = (plr.Name == SelectedPlayer) and Color3.fromRGB(0, 40, 38) or CurrentTheme.cardBg
-        btn.BorderSizePixel = 0
-        btn.AutoButtonColor = false
-        btn.ZIndex = 5
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
-        local bStroke = Instance.new("UIStroke", btn)
-        bStroke.Color = (plr.Name == SelectedPlayer) and Color3.fromRGB(0, 180, 170) or CurrentTheme.stroke
-        bStroke.Thickness = (plr.Name == SelectedPlayer) and 2 or 1
 
-        pcall(function()
-            local thumb = Instance.new("ImageLabel", btn)
-            thumb.Size = UDim2.new(0, 28, 0, 28)
-            thumb.Position = UDim2.new(0, 6, 0.5, -14)
-            thumb.BackgroundTransparency = 1
-            thumb.Image = Players:GetUserThumbnailAsync(plr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
-            thumb.ZIndex = 7
-            Instance.new("UICorner", thumb).CornerRadius = UDim.new(1, 0)
-        end)
+    -- Get all players and sort alphabetically A-Z by DisplayName
+    local allPlayers = Players:GetPlayers()
+    table.sort(allPlayers, function(a, b)
+        return a.DisplayName:lower() < b.DisplayName:lower()
+    end)
 
-        local nL = Instance.new("TextLabel", btn)
-        nL.Size = UDim2.new(1, -80, 0, 16)
-        nL.Position = UDim2.new(0, 40, 0, 4)
-        nL.BackgroundTransparency = 1
-        nL.Text = plr.DisplayName
-        nL.Font = Enum.Font.GothamBold
-        nL.TextSize = 11
-        nL.TextColor3 = CurrentTheme.textPrimary
-        nL.TextXAlignment = Enum.TextXAlignment.Left
-        nL.TextTruncate = Enum.TextTruncate.AtEnd
-        nL.ZIndex = 6
+    local query = PlayerSearchQuery:lower()
+    local visIdx = 0
 
-        local uL = Instance.new("TextLabel", btn)
-        uL.Size = UDim2.new(1, -80, 0, 12)
-        uL.Position = UDim2.new(0, 40, 0, 22)
-        uL.BackgroundTransparency = 1
-        uL.Text = "@" .. plr.Name
-        uL.Font = Enum.Font.Gotham
-        uL.TextSize = 9
-        uL.TextColor3 = CurrentTheme.textMuted
-        uL.TextXAlignment = Enum.TextXAlignment.Left
-        uL.ZIndex = 6
+    for _, plr in ipairs(allPlayers) do
+        -- Filter by search query
+        local passSearch = (query == "")
+            or plr.DisplayName:lower():find(query, 1, true)
+            or plr.Name:lower():find(query, 1, true)
 
-        if plr == player then
-            local yB = Instance.new("TextLabel", btn)
-            yB.Size = UDim2.new(0, 30, 0, 16)
-            yB.Position = UDim2.new(1, -38, 0.5, -8)
-            yB.BackgroundColor3 = Color3.fromRGB(40, 200, 100)
-            yB.BackgroundTransparency = 0.6
-            yB.Text = "YOU"
-            yB.Font = Enum.Font.GothamBold
-            yB.TextSize = 8
-            yB.TextColor3 = Color3.fromRGB(255, 255, 255)
-            yB.BorderSizePixel = 0
-            yB.ZIndex = 6
-            Instance.new("UICorner", yB).CornerRadius = UDim.new(0, 5)
-        end
+        if passSearch then
+            visIdx = visIdx + 1
+            local btn = Instance.new("TextButton", playerScroll)
+            btn.Size = UDim2.new(1, -4, 0, 40)
+            btn.Text = ""
+            btn.BackgroundColor3 = (plr.Name == SelectedPlayer) and Color3.fromRGB(0, 40, 38) or CurrentTheme.cardBg
+            btn.BorderSizePixel = 0
+            btn.AutoButtonColor = false
+            btn.ZIndex = 5
+            btn.LayoutOrder = visIdx
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+            local bStroke = Instance.new("UIStroke", btn)
+            bStroke.Color = (plr.Name == SelectedPlayer) and Color3.fromRGB(0, 180, 170) or CurrentTheme.stroke
+            bStroke.Thickness = (plr.Name == SelectedPlayer) and 2 or 1
 
-        if plr.Name == SelectedPlayer then
-            local sI = Instance.new("TextLabel", btn)
-            sI.Size = UDim2.new(0, 16, 0, 16)
-            sI.Position = UDim2.new(1, -22, 0.5, -8)
-            sI.BackgroundTransparency = 1
-            sI.Text = "✓"
-            sI.Font = Enum.Font.GothamBold
-            sI.TextSize = 14
-            sI.TextColor3 = Color3.fromRGB(0, 210, 210)
-            sI.ZIndex = 6
-        end
+            pcall(function()
+                local thumb = Instance.new("ImageLabel", btn)
+                thumb.Size = UDim2.new(0, 28, 0, 28)
+                thumb.Position = UDim2.new(0, 6, 0.5, -14)
+                thumb.BackgroundTransparency = 1
+                thumb.Image = Players:GetUserThumbnailAsync(plr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+                thumb.ZIndex = 7
+                Instance.new("UICorner", thumb).CornerRadius = UDim.new(1, 0)
+            end)
 
-        btn.MouseEnter:Connect(function() Tween(btn, {BackgroundColor3 = CurrentTheme.cardHover}, 0.12) end)
-        btn.MouseLeave:Connect(function()
-            local sel = plr.Name == SelectedPlayer
-            Tween(btn, {BackgroundColor3 = sel and Color3.fromRGB(0, 40, 38) or CurrentTheme.cardBg}, 0.12)
-        end)
-        btn.MouseButton1Click:Connect(function()
-            if SelectedPlayer == plr.Name then
-                SelectedPlayer = nil
-                selectedPlayerLabel.Text = "Dipilih: Tidak ada"
-            else
-                SelectedPlayer = plr.Name
-                selectedPlayerLabel.Text = "Dipilih: " .. plr.DisplayName
-                SendNotification("player", "Dipilih 👤", plr.DisplayName, 2.5)
-                if SyncEnabled then
-                    syncLabel.Text = "ON — Copying " .. plr.Name
-                    StartSyncFromPlayer()
-                end
+            local nL = Instance.new("TextLabel", btn)
+            nL.Size = UDim2.new(1, -80, 0, 16)
+            nL.Position = UDim2.new(0, 40, 0, 4)
+            nL.BackgroundTransparency = 1
+            nL.Text = plr.DisplayName
+            nL.Font = Enum.Font.GothamBold
+            nL.TextSize = 11
+            nL.TextColor3 = CurrentTheme.textPrimary
+            nL.TextXAlignment = Enum.TextXAlignment.Left
+            nL.TextTruncate = Enum.TextTruncate.AtEnd
+            nL.ZIndex = 6
+
+            local uL = Instance.new("TextLabel", btn)
+            uL.Size = UDim2.new(1, -80, 0, 12)
+            uL.Position = UDim2.new(0, 40, 0, 22)
+            uL.BackgroundTransparency = 1
+            uL.Text = "@" .. plr.Name
+            uL.Font = Enum.Font.Gotham
+            uL.TextSize = 9
+            uL.TextColor3 = CurrentTheme.textMuted
+            uL.TextXAlignment = Enum.TextXAlignment.Left
+            uL.ZIndex = 6
+
+            if plr == player then
+                local yB = Instance.new("TextLabel", btn)
+                yB.Size = UDim2.new(0, 30, 0, 16)
+                yB.Position = UDim2.new(1, -38, 0.5, -8)
+                yB.BackgroundColor3 = Color3.fromRGB(40, 200, 100)
+                yB.BackgroundTransparency = 0.6
+                yB.Text = "YOU"
+                yB.Font = Enum.Font.GothamBold
+                yB.TextSize = 8
+                yB.TextColor3 = Color3.fromRGB(255, 255, 255)
+                yB.BorderSizePixel = 0
+                yB.ZIndex = 6
+                Instance.new("UICorner", yB).CornerRadius = UDim.new(0, 5)
             end
-            UpdatePlayerList()
-        end)
-        table.insert(playerButtons, btn)
+
+            if plr.Name == SelectedPlayer then
+                local sI = Instance.new("TextLabel", btn)
+                sI.Size = UDim2.new(0, 16, 0, 16)
+                sI.Position = UDim2.new(1, -22, 0.5, -8)
+                sI.BackgroundTransparency = 1
+                sI.Text = "✓"
+                sI.Font = Enum.Font.GothamBold
+                sI.TextSize = 14
+                sI.TextColor3 = Color3.fromRGB(0, 210, 210)
+                sI.ZIndex = 6
+            end
+
+            btn.MouseEnter:Connect(function() Tween(btn, {BackgroundColor3 = CurrentTheme.cardHover}, 0.12) end)
+            btn.MouseLeave:Connect(function()
+                local sel = plr.Name == SelectedPlayer
+                Tween(btn, {BackgroundColor3 = sel and Color3.fromRGB(0, 40, 38) or CurrentTheme.cardBg}, 0.12)
+            end)
+            btn.MouseButton1Click:Connect(function()
+                if SelectedPlayer == plr.Name then
+                    SelectedPlayer = nil
+                    selectedPlayerLabel.Text = "Dipilih: Tidak ada"
+                else
+                    SelectedPlayer = plr.Name
+                    selectedPlayerLabel.Text = "Dipilih: " .. plr.DisplayName
+                    SendNotification("player", "Dipilih 👤", plr.DisplayName, 2.5)
+                    if SyncEnabled then
+                        syncLabel.Text = "ON — Copying " .. plr.Name
+                        StartSyncFromPlayer()
+                    end
+                end
+                UpdatePlayerList()
+            end)
+            table.insert(playerButtons, btn)
+        end
+    end
+
+    -- Show "not found" if no players match search
+    if visIdx == 0 and query ~= "" then
+        local nr = Instance.new("TextButton", playerScroll)
+        nr.Size = UDim2.new(1, -4, 0, 40)
+        nr.Text = "😔 Player tidak ditemukan"
+        nr.BackgroundColor3 = CurrentTheme.cardBg
+        nr.Font = Enum.Font.GothamMedium
+        nr.TextSize = 10
+        nr.TextColor3 = CurrentTheme.textMuted
+        nr.BorderSizePixel = 0
+        nr.AutoButtonColor = false
+        nr.ZIndex = 5
+        nr.LayoutOrder = 1
+        Instance.new("UICorner", nr).CornerRadius = UDim.new(0, 8)
+        table.insert(playerButtons, nr)
     end
 end
+
+-- Connect player search box to update player list
+playerSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    PlayerSearchQuery = playerSearchBox.Text
+    UpdatePlayerList()
+end)
 
 UpdatePlayerList()
 Players.PlayerAdded:Connect(function() task.wait(0.5); UpdatePlayerList() end)
@@ -1638,7 +1708,6 @@ Players.PlayerRemoving:Connect(function(plr)
     if SelectedPlayer == plr.Name then
         SelectedPlayer = nil
         selectedPlayerLabel.Text = "Dipilih: Tidak ada"
-        -- FIX: Stop sync jika player yang di-follow keluar
         if SyncEnabled then
             syncLabel.Text = "ON — Player keluar, pilih lagi!"
             if syncConnection then syncConnection:Disconnect(); syncConnection = nil end
@@ -1652,12 +1721,11 @@ end)
 -- LOCK HEARTBEAT — FIXED VERSION
 -- ============================================================
 local lockTickAccumulator = 0
-local LOCK_CHECK_INTERVAL = 0.15 -- Cek 6-7x per detik, cukup responsif
+local LOCK_CHECK_INTERVAL = 0.15
 
 RunService.Heartbeat:Connect(function(dt)
     if not ScriptActive or not LockAnimationEnabled or not LockedAnimationTrack or not LockedAnimationId then return end
 
-    -- Throttle supaya tidak berat
     lockTickAccumulator = lockTickAccumulator + dt
     if lockTickAccumulator < LOCK_CHECK_INTERVAL then return end
     lockTickAccumulator = 0
@@ -1669,12 +1737,11 @@ RunService.Heartbeat:Connect(function(dt)
     local anim = hum:FindFirstChildOfClass("Animator")
     if not anim then return end
 
-    -- Re-play jika locked track berhenti
     if not LockedAnimationTrack.IsPlaying then
         local a = Instance.new("Animation")
         a.AnimationId = LockedAnimationId
         local ok, t = pcall(function() return anim:LoadAnimation(a) end)
-        a:Destroy() -- FIX: memory leak
+        a:Destroy()
         if ok and t then
             t.Priority = Enum.AnimationPriority.Action4
             t.Looped = true
@@ -1685,7 +1752,6 @@ RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Stop animasi yang mengganggu (core/idle/movement)
     if LockedAnimationTrack and LockedAnimationTrack.IsPlaying then
         for _, at in ipairs(anim:GetPlayingAnimationTracks()) do
             if at ~= LockedAnimationTrack then
@@ -1726,14 +1792,12 @@ task.spawn(function()
         task.wait(1)
         SetupEmoteOverride()
 
-        -- FIX: Re-setup sync connection saat respawn
         if SyncEnabled and SelectedPlayer then
             task.wait(0.3)
             StartSyncFromPlayer()
             SendNotification("sync", "Sync Reconnected 🔗", "Auto-sync ke " .. SelectedPlayer .. " setelah respawn.", 2.5)
         end
 
-        -- Re-setup lock animation saat respawn
         if LockAnimationEnabled and LockedAnimationId and LockedAnimationId ~= "" then
             task.wait(0.5)
             local ch = player.Character
@@ -1746,7 +1810,7 @@ task.spawn(function()
                     local a = Instance.new("Animation")
                     a.AnimationId = LockedAnimationId
                     local ok, t = pcall(function() return animController:LoadAnimation(a) end)
-                    a:Destroy() -- FIX: memory leak
+                    a:Destroy()
 
                     if ok and t then
                         t.Priority = Enum.AnimationPriority.Action4
