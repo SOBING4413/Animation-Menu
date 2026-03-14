@@ -1,4 +1,17 @@
 -- ============================================================
+-- ANIMATION MENU v2 — FIXED & OPTIMIZED
+-- by Sobing4413 | Bug fixes by Alex
+-- ============================================================
+-- FIX LOG:
+-- 1. Dance unsync setelah chat/kirim pesan → fixed dengan cek IsPlaying + auto-replay
+-- 2. Sync tidak re-init saat respawn → fixed dengan StartSyncFromPlayer() di CharacterAdded
+-- 3. Memory leak Animation instances → fixed dengan :Destroy() setelah LoadAnimation
+-- 4. ActiveAnimations tidak dibersihkan → fixed dengan track.Stopped cleanup
+-- 5. Debounce pada sync replay → mencegah spam replay tiap frame
+-- 6. Lock animation lebih robust setelah respawn
+-- ============================================================
+
+-- ============================================================
 -- SERVICES
 -- ============================================================
 local Players = game:GetService("Players")
@@ -101,7 +114,7 @@ local CurrentThemeName = "Cyan"
 local CurrentTheme = Themes[CurrentThemeName]
 
 -- ============================================================
--- ANIMATION LIST (DIPERBANYAK + VIRAL + SEARCH)
+-- ANIMATION LIST
 -- ============================================================
 local AnimationList = {
     -- VIRAL
@@ -473,7 +486,7 @@ local subtitle = Instance.new("TextLabel", topBar)
 subtitle.Size = UDim2.new(0, 350, 0, 14)
 subtitle.Position = UDim2.new(0, 56, 0, 30)
 subtitle.BackgroundTransparency = 1
-subtitle.Text = "by Sobing4413"
+subtitle.Text = "by Sobing4413 • v2 Fixed"
 subtitle.Font = Enum.Font.GothamMedium
 subtitle.TextSize = 10
 subtitle.TextColor3 = CurrentTheme.textMuted
@@ -757,55 +770,113 @@ syncTitle.ZIndex = 5
 
 local syncToggle, syncLabel, UpdateSyncVisual = CreateToggleButton(syncSection, 26, "OFF — Klik untuk Copy Emote", Color3.fromRGB(0, 210, 210))
 
+-- ============================================================
+-- SYNC SYSTEM — FIXED VERSION
+-- ============================================================
 local syncConnection = nil
+
 local function StartSyncFromPlayer()
+    -- Disconnect koneksi lama
     if syncConnection then syncConnection:Disconnect(); syncConnection = nil end
     if not SyncEnabled or not SelectedPlayer then return end
+
     local lastCopiedAnimId = ""
-    syncConnection = RunService.Heartbeat:Connect(function()
+    local lastCopiedTrack = nil
+    local replayDebounce = false
+    -- FIX: Throttle — hanya cek setiap ~0.1 detik, bukan setiap frame
+    local syncTickAccumulator = 0
+    local SYNC_CHECK_INTERVAL = 0.1 -- cek 10x per detik, cukup responsif tanpa lag
+
+    syncConnection = RunService.Heartbeat:Connect(function(dt)
         if not SyncEnabled or not SelectedPlayer then return end
+        if replayDebounce then return end
+
+        -- Throttle: akumulasi waktu, skip jika belum waktunya
+        syncTickAccumulator = syncTickAccumulator + dt
+        if syncTickAccumulator < SYNC_CHECK_INTERVAL then return end
+        syncTickAccumulator = 0
+
+        -- Cek target player
         local targetPlayer = Players:FindFirstChild(SelectedPlayer)
         if not targetPlayer or not targetPlayer.Character then return end
         local targetHumanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
         if not targetHumanoid then return end
         local targetAnimator = targetHumanoid:FindFirstChildOfClass("Animator")
         if not targetAnimator then return end
+
+        -- Cek karakter kita sendiri
+        local myChar = player.Character
+        if not myChar then return end
+        local myHum = myChar:FindFirstChildOfClass("Humanoid")
+        if not myHum then return end
+        local myAnim = myHum:FindFirstChildOfClass("Animator")
+        if not myAnim then myAnim = Instance.new("Animator", myHum) end
+
+        -- Cari animasi dengan priority tertinggi dari target
         local playingTracks = targetAnimator:GetPlayingAnimationTracks()
         local bestTrack, bestPri = nil, -1
         for _, t in ipairs(playingTracks) do
-            local priNum = 0
-            local pri = t.Priority
-            if pri == Enum.AnimationPriority.Action4 then priNum = 6
-            elseif pri == Enum.AnimationPriority.Action3 then priNum = 5
-            elseif pri == Enum.AnimationPriority.Action2 then priNum = 4
-            elseif pri == Enum.AnimationPriority.Action then priNum = 3
-            elseif pri == Enum.AnimationPriority.Movement then priNum = 2
-            elseif pri == Enum.AnimationPriority.Idle then priNum = 1 end
-            if priNum > bestPri and t.IsPlaying then bestPri = priNum; bestTrack = t end
+            if t.IsPlaying then
+                local priNum = 0
+                local pri = t.Priority
+                if pri == Enum.AnimationPriority.Action4 then priNum = 6
+                elseif pri == Enum.AnimationPriority.Action3 then priNum = 5
+                elseif pri == Enum.AnimationPriority.Action2 then priNum = 4
+                elseif pri == Enum.AnimationPriority.Action then priNum = 3
+                elseif pri == Enum.AnimationPriority.Movement then priNum = 2
+                elseif pri == Enum.AnimationPriority.Idle then priNum = 1 end
+                if priNum > bestPri then bestPri = priNum; bestTrack = t end
+            end
         end
+
         if bestTrack and bestTrack.Animation then
             local animId = bestTrack.Animation.AnimationId
-            if animId and animId ~= "" and animId ~= lastCopiedAnimId then
-                lastCopiedAnimId = animId
-                local myChar = player.Character
-                if not myChar then return end
-                local myHum = myChar:FindFirstChildOfClass("Humanoid")
-                if not myHum then return end
-                local myAnim = myHum:FindFirstChildOfClass("Animator")
-                if not myAnim then myAnim = Instance.new("Animator", myHum) end
-                for _, tr in pairs(ActiveAnimations) do if tr and tr.IsPlaying then tr:Stop(0.2) end end
-                ActiveAnimations = {}
-                local animation = Instance.new("Animation")
-                animation.AnimationId = animId
-                local ok, newTrack = pcall(function() return myAnim:LoadAnimation(animation) end)
-                if ok and newTrack then
-                    newTrack.Priority = Enum.AnimationPriority.Action4
-                    newTrack.Looped = bestTrack.Looped
-                    newTrack:Play()
-                    newTrack:AdjustSpeed(bestTrack.Speed * AnimationSpeed)
-                    CurrentAnimationId = animId
-                    CurrentAnimationName = "Copied from " .. SelectedPlayer
-                    ActiveAnimations[animId] = newTrack
+            if animId and animId ~= "" then
+                -- ===== FIX UTAMA: Cek apakah kita perlu replay =====
+                -- Replay jika:
+                -- 1. Animasi target berubah (ID beda)
+                -- 2. Track kita sudah tidak playing (interrupted oleh chat/movement/respawn)
+                -- 3. Track kita nil (belum pernah copy)
+                local myTrackStillPlaying = (lastCopiedTrack ~= nil and lastCopiedTrack.IsPlaying)
+                local animChanged = (animId ~= lastCopiedAnimId)
+
+                if animChanged or not myTrackStillPlaying then
+                    replayDebounce = true
+                    lastCopiedAnimId = animId
+
+                    -- Stop animasi lama dengan fade cepat
+                    for _, tr in pairs(ActiveAnimations) do
+                        if tr and tr.IsPlaying then tr:Stop(0.1) end
+                    end
+                    ActiveAnimations = {}
+
+                    local animation = Instance.new("Animation")
+                    animation.AnimationId = animId
+                    local ok, newTrack = pcall(function() return myAnim:LoadAnimation(animation) end)
+                    animation:Destroy() -- FIX: prevent memory leak
+
+                    if ok and newTrack then
+                        newTrack.Priority = Enum.AnimationPriority.Action4
+                        newTrack.Looped = bestTrack.Looped
+                        newTrack:Play(0.1)
+                        newTrack:AdjustSpeed(bestTrack.Speed * AnimationSpeed)
+                        CurrentAnimationId = animId
+                        CurrentAnimationName = "Copied from " .. SelectedPlayer
+                        ActiveAnimations[animId] = newTrack
+                        lastCopiedTrack = newTrack
+
+                        -- Auto-cleanup saat track berhenti
+                        newTrack.Stopped:Once(function()
+                            if ActiveAnimations[animId] == newTrack then
+                                ActiveAnimations[animId] = nil
+                            end
+                        end)
+                    end
+
+                    -- Debounce: jeda 0.25 detik sebelum boleh replay lagi
+                    task.delay(0.25, function()
+                        replayDebounce = false
+                    end)
                 end
             end
         end
@@ -883,7 +954,9 @@ lockToggle.MouseButton1Click:Connect(function()
         lockLabel.Text = "OFF — Animasi normal"
         SendNotification("unlock", "Lock NONAKTIF", "Animasi kembali normal.", 2.5)
         if LockedAnimationTrack then LockedAnimationTrack:Stop(0.3) end
-        LockedAnimationTrack = nil; LockedAnimationId = nil; LockedAnimationName = nil
+        LockedAnimationTrack = nil
+        LockedAnimationId = nil
+        LockedAnimationName = nil
     end
 end)
 
@@ -1167,7 +1240,7 @@ animScrollLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(functio
 end)
 
 -- ============================================================
--- PLAY / STOP ANIMATION
+-- PLAY / STOP ANIMATION — FIXED VERSION
 -- ============================================================
 local function PlayAnimation(animId, animName)
     local ch = player.Character
@@ -1177,21 +1250,44 @@ local function PlayAnimation(animId, animName)
     local animator = hum:FindFirstChildOfClass("Animator")
     if not animator then animator = Instance.new("Animator", hum) end
 
-    for _, tr in pairs(ActiveAnimations) do if tr and tr.IsPlaying then tr:Stop(0.3) end end
+    -- Stop semua animasi aktif
+    for _, tr in pairs(ActiveAnimations) do
+        if tr and tr.IsPlaying then tr:Stop(0.2) end
+    end
     ActiveAnimations = {}
-    if LockedAnimationTrack then LockedAnimationTrack:Stop(0.3); LockedAnimationTrack = nil; LockedAnimationId = nil end
+
+    -- Stop locked animation jika ada
+    if LockedAnimationTrack then
+        LockedAnimationTrack:Stop(0.2)
+        LockedAnimationTrack = nil
+        LockedAnimationId = nil
+        LockedAnimationName = nil
+    end
 
     local animation = Instance.new("Animation")
     animation.AnimationId = animId
     local ok, track = pcall(function() return animator:LoadAnimation(animation) end)
+    animation:Destroy() -- FIX: prevent memory leak
+
     if ok and track then
         track.Priority = Enum.AnimationPriority.Action4
         track.Looped = true
-        track:Play()
+        track:Play(0.15)
         track:AdjustSpeed(AnimationSpeed)
         CurrentAnimationId = animId
         CurrentAnimationName = animName or "Custom"
         ActiveAnimations[animId] = track
+
+        -- FIX: Auto-cleanup ketika track berhenti sendiri
+        track.Stopped:Once(function()
+            if ActiveAnimations[animId] == track then
+                ActiveAnimations[animId] = nil
+            end
+            if LockedAnimationTrack == track then
+                LockedAnimationTrack = nil
+            end
+        end)
+
         if LockAnimationEnabled then
             LockedAnimationTrack = track
             LockedAnimationId = animId
@@ -1209,8 +1305,11 @@ local function StopAllAnimations()
     for _, tr in pairs(ActiveAnimations) do if tr and tr.IsPlaying then tr:Stop(0.3) end end
     ActiveAnimations = {}
     if LockedAnimationTrack then LockedAnimationTrack:Stop(0.3) end
-    LockedAnimationTrack = nil; LockedAnimationId = nil; LockedAnimationName = nil
-    CurrentAnimationId = ""; CurrentAnimationName = ""
+    LockedAnimationTrack = nil
+    LockedAnimationId = nil
+    LockedAnimationName = nil
+    CurrentAnimationId = ""
+    CurrentAnimationName = ""
     statusLabel.Text = "⏹ Dihentikan"
     statusLabel.TextColor3 = Color3.fromRGB(230, 55, 65)
     SendNotification("info", "Dihentikan ⏹", "Semua animasi dihentikan.", 2)
@@ -1390,13 +1489,17 @@ copyEmoteBtn.MouseButton1Click:Connect(function()
     local tracks = ta:GetPlayingAnimationTracks()
     local best, bestP = nil, -1
     for _, t in ipairs(tracks) do
-        local pn = 0
-        local p = t.Priority
-        if p == Enum.AnimationPriority.Action4 then pn = 6
-        elseif p == Enum.AnimationPriority.Action3 then pn = 5
-        elseif p == Enum.AnimationPriority.Action2 then pn = 4
-        elseif p == Enum.AnimationPriority.Action then pn = 3 end
-        if pn > bestP and t.IsPlaying then bestP = pn; best = t end
+        if t.IsPlaying then
+            local pn = 0
+            local p = t.Priority
+            if p == Enum.AnimationPriority.Action4 then pn = 6
+            elseif p == Enum.AnimationPriority.Action3 then pn = 5
+            elseif p == Enum.AnimationPriority.Action2 then pn = 4
+            elseif p == Enum.AnimationPriority.Action then pn = 3
+            elseif p == Enum.AnimationPriority.Movement then pn = 2
+            elseif p == Enum.AnimationPriority.Idle then pn = 1 end
+            if pn > bestP then bestP = pn; best = t end
+        end
     end
     if best and best.Animation then
         local aid = best.Animation.AnimationId
@@ -1518,7 +1621,10 @@ UpdatePlayerList = function()
                 SelectedPlayer = plr.Name
                 selectedPlayerLabel.Text = "Dipilih: " .. plr.DisplayName
                 SendNotification("player", "Dipilih 👤", plr.DisplayName, 2.5)
-                if SyncEnabled then syncLabel.Text = "ON — Copying " .. plr.Name; StartSyncFromPlayer() end
+                if SyncEnabled then
+                    syncLabel.Text = "ON — Copying " .. plr.Name
+                    StartSyncFromPlayer()
+                end
             end
             UpdatePlayerList()
         end)
@@ -1529,30 +1635,57 @@ end
 UpdatePlayerList()
 Players.PlayerAdded:Connect(function() task.wait(0.5); UpdatePlayerList() end)
 Players.PlayerRemoving:Connect(function(plr)
-    if SelectedPlayer == plr.Name then SelectedPlayer = nil; selectedPlayerLabel.Text = "Dipilih: Tidak ada" end
-    task.wait(0.5); UpdatePlayerList()
+    if SelectedPlayer == plr.Name then
+        SelectedPlayer = nil
+        selectedPlayerLabel.Text = "Dipilih: Tidak ada"
+        -- FIX: Stop sync jika player yang di-follow keluar
+        if SyncEnabled then
+            syncLabel.Text = "ON — Player keluar, pilih lagi!"
+            if syncConnection then syncConnection:Disconnect(); syncConnection = nil end
+        end
+    end
+    task.wait(0.5)
+    UpdatePlayerList()
 end)
 
 -- ============================================================
--- LOCK HEARTBEAT
+-- LOCK HEARTBEAT — FIXED VERSION
 -- ============================================================
-RunService.Heartbeat:Connect(function()
+local lockTickAccumulator = 0
+local LOCK_CHECK_INTERVAL = 0.15 -- Cek 6-7x per detik, cukup responsif
+
+RunService.Heartbeat:Connect(function(dt)
     if not ScriptActive or not LockAnimationEnabled or not LockedAnimationTrack or not LockedAnimationId then return end
+
+    -- Throttle supaya tidak berat
+    lockTickAccumulator = lockTickAccumulator + dt
+    if lockTickAccumulator < LOCK_CHECK_INTERVAL then return end
+    lockTickAccumulator = 0
+
     local ch = player.Character
     if not ch then return end
     local hum = ch:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     local anim = hum:FindFirstChildOfClass("Animator")
     if not anim then return end
+
+    -- Re-play jika locked track berhenti
     if not LockedAnimationTrack.IsPlaying then
         local a = Instance.new("Animation")
         a.AnimationId = LockedAnimationId
         local ok, t = pcall(function() return anim:LoadAnimation(a) end)
+        a:Destroy() -- FIX: memory leak
         if ok and t then
-            t.Priority = Enum.AnimationPriority.Action4; t.Looped = true; t:Play(); t:AdjustSpeed(AnimationSpeed)
-            LockedAnimationTrack = t; ActiveAnimations[LockedAnimationId] = t
+            t.Priority = Enum.AnimationPriority.Action4
+            t.Looped = true
+            t:Play(0.1)
+            t:AdjustSpeed(AnimationSpeed)
+            LockedAnimationTrack = t
+            ActiveAnimations[LockedAnimationId] = t
         end
     end
+
+    -- Stop animasi yang mengganggu (core/idle/movement)
     if LockedAnimationTrack and LockedAnimationTrack.IsPlaying then
         for _, at in ipairs(anim:GetPlayingAnimationTracks()) do
             if at ~= LockedAnimationTrack then
@@ -1576,29 +1709,65 @@ local function SetupEmoteOverride()
     anim.AnimationPlayed:Connect(function(track)
         task.wait(0.05)
         if track ~= LockedAnimationTrack then
-            if track.Priority == Enum.AnimationPriority.Action or track.Priority == Enum.AnimationPriority.Action2 then
+            local pri = track.Priority
+            if pri == Enum.AnimationPriority.Action or pri == Enum.AnimationPriority.Action2 or pri == Enum.AnimationPriority.Action3 then
                 track:AdjustSpeed(EmoteSpeed)
             end
         end
     end)
 end
 
+-- ============================================================
+-- CHARACTER ADDED HANDLER — FIXED VERSION
+-- ============================================================
 task.spawn(function()
     SetupEmoteOverride()
     player.CharacterAdded:Connect(function()
-        task.wait(1); SetupEmoteOverride()
+        task.wait(1)
+        SetupEmoteOverride()
+
+        -- FIX: Re-setup sync connection saat respawn
+        if SyncEnabled and SelectedPlayer then
+            task.wait(0.3)
+            StartSyncFromPlayer()
+            SendNotification("sync", "Sync Reconnected 🔗", "Auto-sync ke " .. SelectedPlayer .. " setelah respawn.", 2.5)
+        end
+
+        -- Re-setup lock animation saat respawn
         if LockAnimationEnabled and LockedAnimationId and LockedAnimationId ~= "" then
             task.wait(0.5)
             local ch = player.Character
             if ch then
                 local hum = ch:FindFirstChildOfClass("Humanoid")
                 if hum then
-                    local anim = hum:FindFirstChildOfClass("Animator") or Instance.new("Animator", hum)
-                    local a = Instance.new("Animation"); a.AnimationId = LockedAnimationId
-                    local ok, t = pcall(function() return anim:LoadAnimation(a) end)
+                    local animController = hum:FindFirstChildOfClass("Animator")
+                    if not animController then animController = Instance.new("Animator", hum) end
+
+                    local a = Instance.new("Animation")
+                    a.AnimationId = LockedAnimationId
+                    local ok, t = pcall(function() return animController:LoadAnimation(a) end)
+                    a:Destroy() -- FIX: memory leak
+
                     if ok and t then
-                        t.Priority = Enum.AnimationPriority.Action4; t.Looped = true; t:Play(); t:AdjustSpeed(AnimationSpeed)
-                        LockedAnimationTrack = t; ActiveAnimations[LockedAnimationId] = t
+                        t.Priority = Enum.AnimationPriority.Action4
+                        t.Looped = true
+                        t:Play(0.15)
+                        t:AdjustSpeed(AnimationSpeed)
+                        LockedAnimationTrack = t
+                        ActiveAnimations[LockedAnimationId] = t
+
+                        t.Stopped:Once(function()
+                            if ActiveAnimations[LockedAnimationId] == t then
+                                ActiveAnimations[LockedAnimationId] = nil
+                            end
+                        end)
+
+                        SendNotification("lock", "Lock Restored 🔒", (LockedAnimationName or "Custom") .. " dikunci ulang.", 2.5)
+                    else
+                        SendNotification("error", "Lock Gagal", "Gagal mengunci animasi setelah respawn.", 2.5)
+                        LockedAnimationTrack = nil
+                        LockedAnimationId = nil
+                        LockedAnimationName = nil
                     end
                 end
             end
@@ -1615,9 +1784,12 @@ UserInputService.InputBegan:Connect(function(input, gp)
         if frame.Visible then
             Tween(frame, {Size = UDim2.new(0, 0, 0, 0), Position = UDim2.new(0.5, 0, 0.5, 0)}, 0.4, Enum.EasingStyle.Back, Enum.EasingDirection.In)
             Tween(shadow, {ImageTransparency = 1}, 0.3)
-            task.wait(0.45); frame.Visible = false
+            task.wait(0.45)
+            frame.Visible = false
         else
-            frame.Visible = true; frame.Size = UDim2.new(0, 0, 0, 0); frame.Position = UDim2.new(0.5, 0, 0.5, 0)
+            frame.Visible = true
+            frame.Size = UDim2.new(0, 0, 0, 0)
+            frame.Position = UDim2.new(0.5, 0, 0.5, 0)
             TweenBounce(frame, {Size = OriginalSize, Position = UDim2.new(0.5, -410, 0.5, -260)}, 0.5)
             Tween(shadow, {ImageTransparency = 0.5}, 0.4)
         end
@@ -1665,7 +1837,7 @@ local loadSub = Instance.new("TextLabel", loadCenter)
 loadSub.Size = UDim2.new(1, 0, 0, 20)
 loadSub.Position = UDim2.new(0, 0, 0, 80)
 loadSub.BackgroundTransparency = 1
-loadSub.Text = "by.Sobing4413 • Search • v1 ✨"
+loadSub.Text = "by.Sobing4413 • v2 Fixed ✨"
 loadSub.Font = Enum.Font.GothamMedium
 loadSub.TextSize = 14
 loadSub.TextColor3 = Color3.fromRGB(0, 210, 210)
@@ -1740,7 +1912,7 @@ task.spawn(function()
     TweenBounce(frame, {Size = OriginalSize, Position = UDim2.new(0.5, -410, 0.5, -260)}, 0.6)
     Tween(shadow, {ImageTransparency = 0.5}, 0.5)
     task.wait(0.7)
-    SendNotification("success", "Script Dimuat! ✨", "Animation Menu v1 siap!", 4)
+    SendNotification("success", "Script Dimuat! ✨", "Animation Menu v2 Fixed siap!", 4)
 end)
 
 -- ============================================================
@@ -1748,7 +1920,7 @@ end)
 -- ============================================================
 gui.Destroying:Connect(function()
     ScriptActive = false
-    if syncConnection then syncConnection:Disconnect() end
+    if syncConnection then syncConnection:Disconnect(); syncConnection = nil end
     for _, tr in pairs(ActiveAnimations) do if tr and tr.IsPlaying then tr:Stop() end end
     if LockedAnimationTrack and LockedAnimationTrack.IsPlaying then LockedAnimationTrack:Stop() end
 end)
